@@ -69,10 +69,17 @@ resource "google_artifact_registry_repository" "mlops" {
   }
 }
 
-# Runtime identity for the API: read-only access to model artifacts, nothing else.
+# Runtime identity for the API: reads model artifacts and calls Gemini, nothing else.
 resource "google_service_account" "api" {
   account_id   = "income-api"
   display_name = "income-api Cloud Run runtime"
+}
+
+# Gemini calls for /predict-explained.
+resource "google_project_iam_member" "api_calls_gemini" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_storage_bucket_iam_member" "api_reads_models" {

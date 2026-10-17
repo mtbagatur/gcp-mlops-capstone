@@ -38,12 +38,10 @@ def train_model(data: Input[Dataset], learning_rate: float, max_iter: int, model
     import joblib
     import pandas as pd
 
-    from training.features import TARGET, prepare
-    from training.train import build_model
+    from training.train import fit_model
 
     tr = pd.read_parquet(data.path).query("split == 'TRAIN'")
-    m = build_model(learning_rate, max_iter).fit(prepare(tr), tr[TARGET].astype(int))
-    joblib.dump(m, model.path)
+    joblib.dump(fit_model(tr, learning_rate, max_iter), model.path)
     model.metadata.update({"framework": "scikit-learn", "learning_rate": learning_rate, "max_iter": max_iter})
 
 

@@ -13,8 +13,10 @@ def client(synthetic_df, tmp_path, monkeypatch):
     joblib.dump(model, path)
     monkeypatch.setattr(main, "MODEL_URI", str(path))
     main.get_model.cache_clear()
+    main.get_explainer.cache_clear()
     yield TestClient(main.app)
     main.get_model.cache_clear()
+    main.get_explainer.cache_clear()
 
 
 def test_health(client):
@@ -57,3 +59,57 @@ def test_model_trained_on_bigquery_dtypes_serves(synthetic_df, tmp_path, monkeyp
     main.get_model.cache_clear()
     assert TestClient(main.app).post("/predict", json=person).status_code == 200
     main.get_model.cache_clear()
+
+
+def test_explained_prediction_with_narrative(client, person, monkeypatch):
+    calls = {}
+
+    def fake_narrate(p, factors, lang):
+        calls.update(p=p, factors=factors, lang=lang)
+        return {"summary": "The model weighed capital gain heavily.", "key_factors": ["a", "b", "c"]}
+
+    monkeypatch.setattr(main.narrative, "narrate", fake_narrate)
+    r = client.post("/predict-explained?lang=tr", json=person)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["top_factors"]) == 3
+    assert body["narrative"]["summary"].startswith("The model")
+    assert body["narrative_error"] is None
+    assert body["confidence"] in {"low", "medium", "high"}
+    assert calls["lang"] == "tr" and len(calls["factors"]) == 3
+
+
+def test_llm_failure_degrades_to_numbers(client, person, monkeypatch):
+    def broken(*a, **k):
+        raise TimeoutError("vertex timeout")
+
+    monkeypatch.setattr(main.narrative, "narrate", broken)
+    r = client.post("/predict-explained", json=person)
+    assert r.status_code == 200
+    assert r.json()["narrative"] is None
+    assert "TimeoutError" in r.json()["narrative_error"]
+    assert len(r.json()["top_factors"]) == 3
+
+
+def test_unknown_language_rejected(client, person):
+    assert client.post("/predict-explained?lang=de", json=person).status_code == 422
+
+
+@pytest.mark.parametrize("p,expected", [(0.97, "high"), (0.02, "high"), (0.75, "medium"), (0.55, "low")])
+def test_confidence_bands(p, expected):
+    assert main.confidence(p) == expected
+
+
+def test_model_without_background_returns_503(synthetic_df, tmp_path, monkeypatch, person):
+    model, _ = train.train(synthetic_df, 0.1, 100)
+    del model.explain_background_
+    path = tmp_path / "old.joblib"
+    joblib.dump(model, path)
+    monkeypatch.setattr(main, "MODEL_URI", str(path))
+    main.get_model.cache_clear()
+    main.get_explainer.cache_clear()
+    c = TestClient(main.app)
+    assert c.post("/predict", json=person).status_code == 200
+    assert c.post("/predict-explained", json=person).status_code == 503
+    main.get_model.cache_clear()
+    main.get_explainer.cache_clear()

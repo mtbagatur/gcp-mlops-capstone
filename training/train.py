@@ -52,10 +52,17 @@ def build_model(learning_rate: float = 0.1, max_iter: int = 200) -> Pipeline:
     return Pipeline([("prep", prep), ("clf", clf)])
 
 
+def fit_model(tr: pd.DataFrame, learning_rate: float, max_iter: int, n_background: int = 100) -> Pipeline:
+    """Fit on the TRAIN rows and attach a fixed background sample for Shapley explanations."""
+    model = build_model(learning_rate, max_iter).fit(prepare(tr), tr[TARGET].astype(int))
+    model.explain_background_ = prepare(tr.sample(min(n_background, len(tr)), random_state=SEED))
+    return model
+
+
 def train(df: pd.DataFrame, learning_rate: float, max_iter: int) -> tuple[Pipeline, dict]:
     tr = df[df["split"] == "TRAIN"]
     te = df[df["split"] == "TEST"]
-    model = build_model(learning_rate, max_iter).fit(prepare(tr), tr[TARGET].astype(int))
+    model = fit_model(tr, learning_rate, max_iter)
     auc = roc_auc_score(te[TARGET].astype(int), model.predict_proba(prepare(te))[:, 1])
     metrics = {
         "roc_auc": round(float(auc), 4),

@@ -6,9 +6,11 @@ from functools import lru_cache
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app import narrative
+from app.explain import Explainer
 from training.features import prepare
 
 MODEL_URI = os.getenv("MODEL_URI", "artifacts/model.joblib")
@@ -40,6 +42,22 @@ class Prediction(BaseModel):
     model_version: str
 
 
+class Factor(BaseModel):
+    feature: str
+    value: str | int | float
+    contribution: float
+    direction: str
+
+
+class ExplainedPrediction(Prediction):
+    confidence: str
+    base_log_odds: float
+    top_factors: list[Factor]
+    contributions: dict[str, float]
+    narrative: dict | None
+    narrative_error: str | None = None
+
+
 def _download(uri: str) -> str:
     from google.cloud import storage
 
@@ -56,6 +74,17 @@ def get_model():
 
 
 # Not /healthz: Cloud Run reserves paths ending in "z" and answers them itself.
+@lru_cache(maxsize=1)
+def get_explainer():
+    return Explainer(get_model())
+
+
+def confidence(p: float) -> str:
+    """Deterministic, not left to the LLM."""
+    distance = abs(p - 0.5)
+    return "high" if distance >= 0.35 else "medium" if distance >= 0.15 else "low"
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model_version": MODEL_VERSION, "app_version": APP_VERSION}
@@ -70,3 +99,34 @@ def predict(person: Person):
     row = prepare(pd.DataFrame([person.model_dump()]))
     p = float(model.predict_proba(row)[0, 1])
     return Prediction(high_income_probability=round(p, 4), high_income=p >= 0.5, model_version=MODEL_VERSION)
+
+
+@app.post("/predict-explained", response_model=ExplainedPrediction)
+def predict_explained(person: Person, lang: str = Query("en", pattern="^(en|tr)$")):
+    try:
+        model = get_model()
+        explainer = get_explainer()
+    except FileNotFoundError:
+        raise HTTPException(503, "model not available")
+    except ValueError as e:  # model trained before explanations existed
+        raise HTTPException(503, str(e))
+    row = prepare(pd.DataFrame([person.model_dump()]))
+    p = float(model.predict_proba(row)[0, 1])
+    exp = explainer.explain(row)
+
+    # The numbers are the source of truth; the LLM summary is best-effort.
+    story, error = None, None
+    try:
+        story = narrative.narrate(p, exp["top_factors"], lang)
+    except Exception as e:  # noqa: BLE001 - any LLM failure degrades to numbers only
+        error = f"{type(e).__name__}: {str(e)[:200]}"
+
+    return ExplainedPrediction(
+        high_income_probability=round(p, 4),
+        high_income=p >= 0.5,
+        model_version=MODEL_VERSION,
+        confidence=confidence(p),
+        narrative=story,
+        narrative_error=error,
+        **exp,
+    )

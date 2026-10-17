@@ -47,7 +47,8 @@ steps:
       - --region=${_REGION}
       - --service-account=income-api@${PROJECT_ID}.iam.gserviceaccount.com
       # --update, not --set: keep MODEL_VERSION, which the training pipeline owns.
-      - --update-env-vars=MODEL_URI=${_MODEL_URI},APP_VERSION=${_TAG}
+      - --update-env-vars=MODEL_URI=${_MODEL_URI},APP_VERSION=${_TAG},PROJECT_ID=${PROJECT_ID}
+      - --memory=1Gi
       - --min-instances=0
       - --max-instances=2
       - --no-allow-unauthenticated
