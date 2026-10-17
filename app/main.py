@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from training.features import prepare
 
 MODEL_URI = os.getenv("MODEL_URI", "artifacts/model.joblib")
-MODEL_VERSION = os.getenv("MODEL_VERSION", "local")
+MODEL_VERSION = os.getenv("MODEL_VERSION", "local")  # set by the training pipeline
+APP_VERSION = os.getenv("APP_VERSION", "local")  # set by CI (commit SHA)
 
 app = FastAPI(title="income-mlops", version="0.1.0")
 
@@ -57,7 +58,7 @@ def get_model():
 # Not /healthz: Cloud Run reserves paths ending in "z" and answers them itself.
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_version": MODEL_VERSION}
+    return {"status": "ok", "model_version": MODEL_VERSION, "app_version": APP_VERSION}
 
 
 @app.post("/predict", response_model=Prediction)
