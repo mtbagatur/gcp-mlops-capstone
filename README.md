@@ -29,9 +29,9 @@ BigQuery (public census) ─▶ mlops.income_training (hash split 80/10/10)     
 | G1 | Every change is tested and deployed automatically | Push → new Cloud Run revision in < 10 min | ✅ pipeline runs in ~3.5 min; GitHub trigger pending |
 | G2 | Reproducible training | Same params → same metric | ✅ unit test + the pipeline run reproduced the local AUC exactly (0.9196) |
 | G3 | Quality gate | AUC < 0.90 is never deployed | ✅ tested on Vertex: with `--min-auc 0.99` the gate branch was `NOT_TRIGGERED`, and no registry version, GCS model or Cloud Run revision was created |
-| G4 | Nightly retraining | Schedule set, last 3 runs green | Schedule live (03:00 Europe/Istanbul); 3-run check pending |
+| G4 | Nightly retraining | Schedule set, last 3 runs green | Schedule `income-nightly` active (03:00 Europe/Istanbul); 3-run check pending |
 | G5 | Low-cost API | ~zero cost with no traffic | ✅ Cloud Run `min-instances=0` (cold start ≈ 9 s, warm ≈ 0.4 s) |
-| G6 | Every prediction explained | Top-3 features + direction | ✅ `/predict-explained`: permutation Shapley values, additivity tested |
+| G6 | Every prediction explained | Top-3 features + direction | ✅ `/predict-explained` live: permutation Shapley values, additivity tested, identical across calls |
 | G7 | Plain-language explanation | Structured Gemini output | ✅ JSON-schema output in English or Turkish, with a non-causal guardrail and a numbers-only fallback |
 | G8 | Input drift monitored | Email on threshold breach | Stage 5 |
 | G9 | Model lineage | Any model → the data that produced it | ✅ registry version labelled with the pipeline run; Vertex ML Metadata links run → dataset → model |
@@ -106,6 +106,7 @@ gcloud storage cp artifacts/model.joblib gs://<id>-mlops/models/current/model.jo
 - **Permutation Shapley values, not TreeSHAP.** TreeSHAP does not handle the model's native categorical splits exactly: base value plus contributions missed the model output by about 2.2 log-odds. The permutation explainer adds up exactly by construction (tested). The cost is about 0.05 s per request after a one-time JIT warm-up. Permutations are re-seeded per call under a lock, so the same input always gets the same explanation.
 - **The numbers are the source of truth, and the LLM is best-effort.** If Gemini fails, the endpoint still returns the probability and attributions, with `narrative_error` set. Confidence bands come from the probability in code, not from the LLM.
 - **LLM guardrails.** The structured JSON schema keeps the output machine-readable. The prompt forbids causal claims ("the model weighed X", never "X raises income"). One answer out of a dozen came back with stray characters, so output outside the expected character set is retried once with thinking enabled.
+- **Known trade-off: cold start.** The first explained request on a fresh instance takes about 20 s (model download, explainer JIT and Gemini client set-up). Warm requests take about 2.5 s, most of it the LLM call. `min-instances=1` would remove the cold start but costs money 24/7, which this demo doesn't justify.
 - **Gemini 2.5 Flash (GA, regional) by default.** Gemini 3 Flash was only available as a preview on the global endpoint, and was slower on its first call. The model and location can be changed with `GEMINI_MODEL` and `GEMINI_LOCATION`.
 - **Model choice.** `HistGradientBoostingClassifier` handles categorical features natively and is a strong baseline for tabular data. Unseen categories at inference map to "unknown" instead of failing (this is tested).
 
