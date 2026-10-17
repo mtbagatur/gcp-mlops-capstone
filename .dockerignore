@@ -1,0 +1,7 @@
+.venv
+.git
+artifacts
+tests
+.gcloudignore
+infra
+**/__pycache__

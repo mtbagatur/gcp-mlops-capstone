@@ -1,0 +1,59 @@
+# Push to main -> test -> build -> push -> deploy (requirement G1).
+# The test step is a gate: if it fails, nothing is built or deployed.
+substitutions:
+  _REGION: us-central1
+  _REPO: mlops
+  _SERVICE: income-api
+  _MODEL_URI: gs://${PROJECT_ID}-mlops/models/current/model.joblib
+  # Commit SHA on trigger builds; pass _TAG=... for manual `gcloud builds submit`.
+  _TAG: ${SHORT_SHA}
+
+steps:
+  - id: test
+    name: python:3.12-slim
+    entrypoint: bash
+    args: ["-c", "pip install -q -r requirements-dev.txt && ruff check . && pytest -q"]
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}", "."]
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}"]
+
+  # Trainer image for the Vertex AI pipeline, built from the same commit.
+  - id: build-trainer
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["test"]
+    args: ["build", "-f", "Dockerfile.train",
+           "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/income-trainer:${_TAG}",
+           "-t", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/income-trainer:latest", "."]
+
+  - id: push-trainer
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["build-trainer"]
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/income-trainer"]
+
+  - id: deploy
+    waitFor: ["push"]
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}
+      - --region=${_REGION}
+      - --service-account=income-api@${PROJECT_ID}.iam.gserviceaccount.com
+      - --set-env-vars=MODEL_URI=${_MODEL_URI},MODEL_VERSION=${_TAG}
+      - --min-instances=0
+      - --max-instances=2
+      - --no-allow-unauthenticated
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true

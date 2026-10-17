@@ -1,0 +1,11 @@
+# Trainer image used by every pipeline step. Keep sklearn/numpy/pandas in sync with requirements.txt.
+numpy==2.2.6
+pandas==2.2.3
+scikit-learn==1.6.0
+joblib==1.4.2
+pyarrow==18.1.0
+google-cloud-bigquery[pandas]==3.27.0
+google-cloud-storage==2.19.0
+google-cloud-aiplatform==2.3.0
+google-cloud-run==0.16.2
+kfp==2.17.0
