@@ -19,6 +19,8 @@ def main():
     p.add_argument("--region", default="us-central1")
     p.add_argument("--min-auc", type=float, default=0.90)
     p.add_argument("--compile-only", action="store_true")
+    p.add_argument("--drift-days", type=int, default=7)
+    p.add_argument("--include-synthetic", action="store_true", help="count tagged demo traffic in the drift check")
     p.add_argument("--wait", action="store_true")
     a = p.parse_args()
 
@@ -34,7 +36,13 @@ def main():
         display_name="income-training",
         template_path=PIPELINE_FILE,
         pipeline_root=f"gs://{a.project}-mlops/pipeline-root",
-        parameter_values={"project": a.project, "region": a.region, "min_auc": a.min_auc},
+        parameter_values={
+            "project": a.project,
+            "region": a.region,
+            "min_auc": a.min_auc,
+            "drift_days": a.drift_days,
+            "drift_include_synthetic": a.include_synthetic,
+        },
         enable_caching=False,
     )
     job.submit(service_account=f"vertex-pipelines@{a.project}.iam.gserviceaccount.com")

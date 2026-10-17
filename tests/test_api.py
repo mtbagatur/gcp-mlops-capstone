@@ -113,3 +113,21 @@ def test_model_without_background_returns_503(synthetic_df, tmp_path, monkeypatc
     assert c.post("/predict-explained", json=person).status_code == 503
     main.get_model.cache_clear()
     main.get_explainer.cache_clear()
+
+
+def test_prediction_is_logged_as_structured_json(client, person, capsys):
+    import json
+
+    client.post("/predict", json=person)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if '"event": "prediction"' in ln]
+    rec = json.loads(lines[-1])
+    assert rec["endpoint"] == "predict" and rec["age"] == person["age"]
+    assert 0 <= rec["probability"] <= 1
+
+
+def test_synthetic_traffic_is_tagged(client, person, capsys):
+    import json
+
+    client.post("/predict", json=person, headers={"X-Traffic-Source": "synthetic"})
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if '"event": "prediction"' in ln]
+    assert json.loads(lines[-1])["source"] == "synthetic"

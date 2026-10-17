@@ -24,6 +24,8 @@ locals {
     "storage.googleapis.com",
     "aiplatform.googleapis.com",
     "billingbudgets.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
   ]
 }
 
@@ -175,4 +177,83 @@ resource "google_service_account_iam_member" "pipelines_acts_as_api" {
   service_account_id = google_service_account.api.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.pipelines.email}"
+}
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: drift monitoring (G8)
+# API prediction logs -> BigQuery (30-day retention) -> nightly PSI check in the
+# pipeline -> WARNING log line -> email alert.
+
+resource "google_bigquery_dataset" "logs" {
+  dataset_id                  = "mlops_logs"
+  location                    = "US" # same location as mlops, so drift queries can join
+  default_table_expiration_ms = 30 * 24 * 60 * 60 * 1000
+  delete_contents_on_destroy  = true
+  depends_on                  = [google_project_service.enabled]
+}
+
+resource "google_logging_project_sink" "predictions" {
+  name                   = "income-api-predictions"
+  destination            = "bigquery.googleapis.com/projects/${var.project_id}/datasets/${google_bigquery_dataset.logs.dataset_id}"
+  filter                 = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"income-api\" AND jsonPayload.event=\"prediction\""
+  unique_writer_identity = true
+
+  bigquery_options {
+    use_partitioned_tables = true
+  }
+}
+
+resource "google_bigquery_dataset_iam_member" "sink_writes_logs" {
+  dataset_id = google_bigquery_dataset.logs.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = google_logging_project_sink.predictions.writer_identity
+}
+
+resource "google_bigquery_dataset_iam_member" "pipelines_reads_logs" {
+  dataset_id = google_bigquery_dataset.logs.dataset_id
+  role       = "roles/bigquery.dataViewer"
+  member     = "serviceAccount:${google_service_account.pipelines.email}"
+}
+
+resource "google_monitoring_notification_channel" "email" {
+  display_name = "MLOps alerts"
+  type         = "email"
+  labels = {
+    email_address = var.alert_email
+  }
+  depends_on = [google_project_service.enabled]
+}
+
+resource "google_monitoring_alert_policy" "drift" {
+  display_name = "Income model: input drift detected"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Drift check logged a WARNING"
+    condition_matched_log {
+      filter = "logName=\"projects/${var.project_id}/logs/income-drift\" AND severity>=WARNING"
+      label_extractors = {
+        drifted = "EXTRACT(jsonPayload.drifted)"
+      }
+    }
+  }
+
+  alert_strategy {
+    notification_rate_limit {
+      period = "3600s"
+    }
+    auto_close = "86400s"
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      Recent prediction requests differ from the training data (PSI > threshold).
+      Check the drifted features in Logs Explorer (log `income-drift`), then decide whether
+      the input pipeline changed (fix it) or the population changed (collect labels, retrain).
+    EOT
+  }
+
+  notification_channels = [google_monitoring_notification_channel.email.id]
 }

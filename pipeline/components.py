@@ -34,6 +34,58 @@ def validate_data(data: Input[Dataset], min_rows: int, stats: Output[Metrics]):
 
 
 @component
+def check_drift(
+    project: str,
+    data: Input[Dataset],
+    days: int,
+    min_requests: int,
+    threshold: float,
+    include_synthetic: bool,
+    report: Output[Metrics],
+) -> str:
+    """Compare recent prediction requests (logged by the API, exported to BigQuery)
+    with the training data. Drift is reported and alerted on, but it does not block
+    retraining: without fresh labels, retraining cannot fix it, so a human decides."""
+    import json
+
+    import pandas as pd
+    from google.api_core.exceptions import NotFound
+    from google.cloud import bigquery
+    from google.cloud import logging as gcl
+
+    from training.drift import drift_report
+    from training.features import FEATURES
+
+    sql = f"""
+        SELECT jsonPayload.* FROM `{project}.mlops_logs.run_googleapis_com_stdout`
+        WHERE jsonPayload.event = 'prediction'
+          AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)"""
+    if not include_synthetic:  # load tests and demos must not raise drift alerts
+        sql += " AND IFNULL(jsonPayload.source, 'live') != 'synthetic'"
+    try:
+        recent = bigquery.Client(project=project).query(sql).to_dataframe()
+    except NotFound:
+        recent = pd.DataFrame()
+    recent.columns = [c.lower() for c in recent.columns]
+
+    logger = gcl.Client(project=project).logger("income-drift")
+    if len(recent) < min_requests:
+        msg = {"status": "skipped", "n_recent": len(recent), "min_requests": min_requests}
+        logger.log_struct(msg, severity="INFO")
+        report.log_metric("n_recent", len(recent))
+        return json.dumps(msg)
+
+    train = pd.read_parquet(data.path).query("split == 'TRAIN'")
+    result = drift_report(train[FEATURES], recent[FEATURES], threshold)
+    result["status"] = "drift" if result["drifted"] else "ok"
+    logger.log_struct(result, severity="WARNING" if result["drifted"] else "INFO")
+    report.log_metric("n_recent", result["n_recent"])
+    report.log_metric("max_psi", max(result["psi"].values()))
+    report.log_metric("drifted_features", len(result["drifted"]))
+    return json.dumps(result)
+
+
+@component
 def train_model(data: Input[Dataset], learning_rate: float, max_iter: int, model: Output[Model]):
     import joblib
     import pandas as pd

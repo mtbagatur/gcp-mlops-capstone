@@ -17,3 +17,8 @@ variable "budget_amount" {
   type        = number
   default     = 20
 }
+
+variable "alert_email" {
+  description = "Where drift alerts are emailed"
+  type        = string
+}

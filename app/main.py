@@ -1,4 +1,5 @@
 """Prediction API, deployed to Cloud Run (scales to zero, requirement G5)."""
+import json
 import os
 import pathlib
 import tempfile
@@ -6,7 +7,7 @@ from functools import lru_cache
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import narrative
@@ -74,6 +75,14 @@ def get_model():
 
 
 # Not /healthz: Cloud Run reserves paths ending in "z" and answers them itself.
+def log_prediction(person: "Person", p: float, endpoint: str, source: str = "live") -> None:
+    """One structured line per prediction. Cloud Run turns JSON stdout into jsonPayload,
+    and a log sink copies these rows to BigQuery for the drift check (G8)."""
+    record = {"event": "prediction", "severity": "INFO", "endpoint": endpoint, "source": source,
+              "model_version": MODEL_VERSION, "probability": round(p, 4), **person.model_dump()}
+    print(json.dumps(record), flush=True)
+
+
 @lru_cache(maxsize=1)
 def get_explainer():
     return Explainer(get_model())
@@ -91,18 +100,23 @@ def health():
 
 
 @app.post("/predict", response_model=Prediction)
-def predict(person: Person):
+def predict(person: Person, x_traffic_source: str = Header("live")):
     try:
         model = get_model()
     except FileNotFoundError:
         raise HTTPException(503, "model not available")
     row = prepare(pd.DataFrame([person.model_dump()]))
     p = float(model.predict_proba(row)[0, 1])
+    log_prediction(person, p, "predict", x_traffic_source)
     return Prediction(high_income_probability=round(p, 4), high_income=p >= 0.5, model_version=MODEL_VERSION)
 
 
 @app.post("/predict-explained", response_model=ExplainedPrediction)
-def predict_explained(person: Person, lang: str = Query("en", pattern="^(en|tr)$")):
+def predict_explained(
+    person: Person,
+    lang: str = Query("en", pattern="^(en|tr)$"),
+    x_traffic_source: str = Header("live"),
+):
     try:
         model = get_model()
         explainer = get_explainer()
@@ -112,6 +126,7 @@ def predict_explained(person: Person, lang: str = Query("en", pattern="^(en|tr)$
         raise HTTPException(503, str(e))
     row = prepare(pd.DataFrame([person.model_dump()]))
     p = float(model.predict_proba(row)[0, 1])
+    log_prediction(person, p, "predict-explained", x_traffic_source)
     exp = explainer.explain(row)
 
     # The numbers are the source of truth; the LLM summary is best-effort.

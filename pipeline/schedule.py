@@ -3,6 +3,7 @@
   python -m pipeline.schedule            # 03:00 Europe/Istanbul every night
   python -m pipeline.schedule --pause    # stop nightly runs (e.g. between demos)
   python -m pipeline.schedule --resume
+  python -m pipeline.schedule --delete   # used by scripts/cleanup.sh
 
 The schedule stores the compiled pipeline spec, so re-run this after changing the
 DAG. Component code changes need no re-run: steps use the trainer image's
@@ -26,10 +27,17 @@ def main():
     g = p.add_mutually_exclusive_group()
     g.add_argument("--pause", action="store_true")
     g.add_argument("--resume", action="store_true")
+    g.add_argument("--delete", action="store_true")
     a = p.parse_args()
 
     aiplatform.init(project=a.project, location=a.region)
     existing = aiplatform.PipelineJobSchedule.list(filter=f'display_name="{NAME}"')
+
+    if a.delete:
+        for s in existing:
+            s.delete()
+            print(f"deleted {s.resource_name}")
+        return
 
     if a.pause or a.resume:
         for s in existing:

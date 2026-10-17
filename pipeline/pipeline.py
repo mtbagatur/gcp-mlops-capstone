@@ -1,7 +1,8 @@
-"""Training pipeline: extract → validate → train → evaluate → (gate) register + deploy."""
+"""Training pipeline: extract → validate (+ drift check) → train → evaluate → (gate) register + deploy."""
 from kfp import dsl
 
 from pipeline.components import (
+    check_drift,
     evaluate_model,
     extract_data,
     register_and_deploy,
@@ -21,9 +22,22 @@ def income_pipeline(
     min_auc: float = 0.90,
     learning_rate: float = 0.1,
     max_iter: int = 200,
+    drift_days: int = 7,
+    drift_min_requests: int = 50,
+    drift_threshold: float = 0.2,
+    drift_include_synthetic: bool = False,
 ):
     data = extract_data(project=project, table=table)
     checked = validate_data(data=data.outputs["data"], min_rows=min_rows)
+    # Runs alongside training; a WARNING log line triggers the email alert policy.
+    check_drift(
+        project=project,
+        data=data.outputs["data"],
+        days=drift_days,
+        min_requests=drift_min_requests,
+        threshold=drift_threshold,
+        include_synthetic=drift_include_synthetic,
+    )
 
     trained = train_model(data=data.outputs["data"], learning_rate=learning_rate, max_iter=max_iter)
     trained.after(checked)
