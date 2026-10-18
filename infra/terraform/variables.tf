@@ -22,3 +22,24 @@ variable "alert_email" {
   description = "Where drift alerts are emailed"
   type        = string
 }
+
+variable "api_service_name" {
+  description = "Cloud Run service the SLOs are measured on"
+  type        = string
+  default     = "income-api"
+}
+
+variable "availability_goal" {
+  type    = number
+  default = 0.99
+}
+
+variable "latency_goal" {
+  type    = number
+  default = 0.95
+}
+
+variable "latency_threshold_ms" {
+  type    = number
+  default = 2000
+}
