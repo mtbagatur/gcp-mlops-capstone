@@ -27,7 +27,7 @@ BigQuery (public census) ─▶ mlops.income_training (hash split 80/10/10)     
 
 | # | Requirement | Acceptance check | Status |
 |---|---|---|---|
-| G1 | Every change is tested and deployed automatically | Push → new Cloud Run revision in < 10 min | ✅ pipeline runs in ~3.5 min; GitHub trigger pending |
+| G1 | Every change is tested and deployed automatically | Push → new Cloud Run revision in < 10 min | ✅ GitHub trigger `deploy-on-main` live: every push to `main` runs tests → image → deploy in ~3.5 min |
 | G2 | Reproducible training | Same params → same metric | ✅ unit test + the pipeline run reproduced the local AUC exactly (0.9196) |
 | G3 | Quality gate | AUC < 0.90 is never deployed | ✅ tested on Vertex: with `--min-auc 0.99` the gate branch was `NOT_TRIGGERED`, and no registry version, GCS model or Cloud Run revision was created |
 | G4 | Nightly retraining | Schedule set, last 3 runs green | ✅ schedule `income-nightly` (03:00 Europe/Istanbul): first 4 scheduled runs (2026-10-18 → 10-21) all `SUCCEEDED` |
